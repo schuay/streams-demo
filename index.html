@@ -44,6 +44,9 @@
         Enter a substring to search for (bytes displayed below)
         <input type="text" id="substring" pattern="[0-9]+" title="Enter only digits" required>
         <output id="bytes" for="substring"></output>
+
+        <input type="radio" name="impl" id="impl_async" value="async" checked> Async-Await<br>
+        <input type="radio" name="impl" id="impl_promise" value="promise"> Promise<br>
     </label>
 
     <input type="submit" value="Search, with the Power of Streams!">
@@ -64,10 +67,12 @@
 (function () {
     'use strict';
 
-    const PI_URL = 'http://stuff.mit.edu/afs/sipb/contrib/pi/pi-billion.txt';
+    // const PI_URL = 'http://localhost:8000/pi-billion.txt';
+    const PI_URL = 'https://cors-anywhere.herokuapp.com/http://stuff.mit.edu/afs/sipb/contrib/pi/pi-billion.txt';
 
     const substring = document.querySelector('#substring');
     const bytes = document.querySelector('#bytes');
+    const impl_async = document.querySelector('#impl_async');
     const form = document.querySelector('#form');
 
     const output = document.querySelector('#output');
@@ -86,6 +91,7 @@
 
     let soFar;
     let contentLength;
+    let start;
 
     form.addEventListener('submit', function (e) {
         e.preventDefault();
@@ -93,19 +99,65 @@
 
         progressText.textContent = 'Performing fetch...';
 
-        fetch(`https://cors-anywhere.herokuapp.com/${PI_URL}`).then(function (res) {
+        fetch(PI_URL).then(function (res) {
+            start = Date.now();
+
             soFar = 0;
             contentLength = res.headers.get('Content-Length');
             progress.max = contentLength;
 
-            return pump(res.body.getReader());
+            if (impl_async.checked) {
+              return pumpAsync(res.body.getReader());
+            } else {
+              return pumpPromise(res.body.getReader());
+            }
         })
         .catch(function (e) {
             progressText.textContent = e;
         });
     });
 
-    function pump(reader) {
+    async function pumpAsync(reader) {
+        var result = await reader.read();
+
+        if (result.done) {
+            progressText.textContent = `All done! (${soFar} bytes total)`;
+            return;
+        }
+
+        const chunk = result.value;
+
+        soFar += chunk.byteLength;
+        updateProgress();
+
+        let found = -1;
+        for (let i = 0; i < chunk.length; ++i) {
+            if (chunk[i] === bytesValue[0]) {
+                found = i;
+                for (let j = 1; j < bytesValue.length; ++j) {
+                    if (chunk[i + j] !== bytesValue[j]) {
+                        found = -1;
+                        break;
+                    }
+                }
+            }
+
+            if (found !== -1) {
+                break;
+            }
+        }
+
+        if (found !== -1) {
+            let end = Date.now();
+            progressText.textContent = `Found it with async-await! At position ${soFar - chunk.byteLength + found}, took ${end - start} ms.`;
+
+            return reader.cancel();
+        } else {
+            return pumpAsync(reader);
+        }
+    }
+
+    function pumpPromise(reader) {
         return reader.read().then(function (result) {
             if (result.done) {
                 progressText.textContent = `All done! (${soFar} bytes total)`;
@@ -135,11 +187,12 @@
             }
 
             if (found !== -1) {
-                progressText.textContent = `Found it! At position ${soFar - chunk.byteLength + found}.`;
+                let end = Date.now();
+                progressText.textContent = `Found it with promises! At position ${soFar - chunk.byteLength + found}, took ${end - start} ms.`;
 
                 return reader.cancel();
             } else {
-                return pump(reader);
+                return pumpPromise(reader);
             }
         });
     }
